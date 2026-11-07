@@ -28,7 +28,7 @@
 - 菜单栏常驻，实时显示最新一条记录
 - 全局快捷键呼出（默认 `⌘⇧V`，可自定义）
 - 键盘流：`↑↓` 选择、`←→` 切换「最近/收藏」、`Enter` **直接粘贴到光标处**、`Esc` 隐藏
-- 开机自动同步
+- 启动后自动开始同步（已保存配置即生效）
 
 **Android**
 - 前台同步；开启**无障碍服务**后可在后台持续同步
@@ -65,9 +65,9 @@ npm run tauri build
 
 ### macOS 签名（重要）
 
-macOS 的「辅助功能」授权（`Enter` 直接粘贴需要）绑定 App 的签名身份。若每次打包都用 ad-hoc 签名（`codesign -s -`），签名哈希会变，授权就会失效、需要重新勾选。
+macOS 的「辅助功能」授权（`Enter` 直接粘贴需要）绑定 App 的签名身份。若每次打包都用 ad-hoc 签名，签名哈希会变，授权就会失效、需要重新勾选。
 
-解决办法：创建一次固定的自签名证书，之后所有版本都用它签名。
+解决办法：创建一次**固定的自签名证书**，并放进一个**专用钥匙串**（密码固定，避免每次 codesign 都弹授权框），之后所有版本都用它签名。
 
 ```bash
 # 1. 生成证书（仅一次）
@@ -80,15 +80,17 @@ openssl req -x509 -newkey rsa:2048 -keyout key.pem -out cert.pem -days 3650 -nod
 openssl pkcs12 -export -legacy -inkey key.pem -in cert.pem -out id.p12 \
   -passout pass:clipsync -name "ClipSync Dev"
 
-security import id.p12 -k "$HOME/Library/Keychains/login.keychain-db" \
-  -P clipsync -T /usr/bin/codesign -A
-security add-trusted-cert -r trustRoot \
-  -k "$HOME/Library/Keychains/login.keychain-db" cert.pem
-
-security find-identity -v -p codesigning   # 应能看到 "ClipSync Dev"
+# 2. 建专用钥匙串并导入（密码公开无妨，只为免交互）
+KC="$HOME/Library/Keychains/clipsync-sign.keychain-db"
+security create-keychain -p clipsync "$KC"
+security set-keychain-settings -lut 21600 "$KC"
+security unlock-keychain -p clipsync "$KC"
+security import id.p12 -k "$KC" -P clipsync -T /usr/bin/codesign -A
+security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k clipsync "$KC"
+security find-identity -v -p codesigning "$KC"   # 应能看到 "ClipSync Dev"
 ```
 
-之后用脚本构建部署，会自动用该证书签名：
+之后用脚本构建部署，会自动启用路径重映射并用该证书签名：
 
 ```bash
 ./scripts/deploy-macos.sh
@@ -102,8 +104,9 @@ security find-identity -v -p codesigning   # 应能看到 "ClipSync Dev"
 
 ```bash
 rustup target add aarch64-linux-android armv7-linux-androideabi i686-linux-android x86_64-linux-android
-tauri android init
-tauri android build --apk
+# 仓库已包含 src-tauri/gen/android，通常无需再 init；仅重建工程时执行：
+# npx tauri android init
+npx tauri android build --apk
 # 产物：src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release.apk
 ```
 
