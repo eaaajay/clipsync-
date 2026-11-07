@@ -1,0 +1,35 @@
+[package]
+name = "clip-sync"
+version = "0.1.0"
+description = "跨设备剪贴板同步：通过 WebDAV 实时同步文本"
+edition = "2021"
+
+[lib]
+name = "clip_sync_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon"] }
+tauri-plugin-clipboard-manager = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+base64 = "0.22"
+ureq = { version = "2", features = ["tls"] }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+
+[profile.release]
+strip = true
+
+# 全局快捷键仅桌面端可用
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+tauri-plugin-global-shortcut = "2"
+
+# macOS：发送键盘事件实现「回车直接粘贴」
+[target.'cfg(target_os = "macos")'.dependencies]
+core-graphics = "0.25"
+objc2 = "0.6"
+objc2-foundation = "0.3"
+objc2-app-kit = { version = "0.3", features = ["NSRunningApplication", "NSWorkspace", "NSPasteboard"] }

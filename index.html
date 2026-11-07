@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>剪贴板同步</title>
+  </head>
+  <body>
+    <div id="app">
+      <header>
+        <h1>剪贴板同步</h1>
+        <div class="header-right">
+          <span id="state" class="state-pill">未运行</span>
+          <button class="btn btn-primary btn-inline" id="toggle">开始同步</button>
+          <button id="settings-toggle" class="icon-btn" title="设置">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="3" />
+              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6 1.65 1.65 0 0 0 10 3.09V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9c.14.36.44.65.8.8H21a2 2 0 1 1 0 4h-.09c-.36.14-.66.44-.8.8z" />
+            </svg>
+          </button>
+        </div>
+      </header>
+
+      <div id="error" class="error-line"></div>
+
+      <section class="card settings hidden" id="settings-card">
+        <label>WebDAV 地址</label>
+        <input id="webdav_url" type="text" placeholder="https://your-webdav-host" autocomplete="off" />
+
+        <label>用户名</label>
+        <input id="username" type="text" placeholder="WebDAV 用户名" autocomplete="off" />
+
+        <label>密码</label>
+        <input id="password" type="password" placeholder="WebDAV 密码" autocomplete="off" />
+
+        <div id="a11y-row" class="a11y-row" style="display:none">
+          <div>
+            <div class="a11y-title">后台实时同步</div>
+            <div class="a11y-desc" id="a11y-desc">需要开启无障碍服务，App 在后台也能同步</div>
+          </div>
+          <button class="btn-mini" id="a11y-btn">去开启</button>
+        </div>
+
+        <label>呼出快捷键</label>
+        <input id="hotkey" type="text" readonly placeholder="点这里后按下组合键，如 ⌘⇧V" />
+        <div class="hint">点进输入框后直接按组合键即可；按 Backspace 清除（关闭快捷键）</div>
+
+        <div class="actions">
+          <button class="btn btn-primary" id="save">保存配置</button>
+        </div>
+        <div class="hint mono">设备标识：<span id="device_id">-</span></div>
+      </section>
+
+      <section class="card history-card">
+        <div class="history-head">
+          <div class="hist-tabs">
+            <button class="hist-tab active" data-tab="recent">
+              最近 <span id="count-recent">0</span>
+            </button>
+            <button class="hist-tab" data-tab="favorites">
+              收藏 <span id="count-fav">0</span>
+            </button>
+          </div>
+          <input id="search" class="search-input" type="search" placeholder="搜索内容…" autocomplete="off" />
+          <div class="head-actions">
+            <button class="btn-mini" id="clear-images">清理图片</button>
+            <button class="btn-mini" id="clear-history">清空</button>
+          </div>
+        </div>
+        <div id="history-list" class="history-list">
+          <div class="history-empty">暂无同步记录</div>
+        </div>
+        <div class="key-hint">
+          <kbd>↑</kbd><kbd>↓</kbd> 选择 ·
+          <kbd>←</kbd><kbd>→</kbd> 切换 ·
+          <kbd>Enter</kbd> 粘贴到光标处 ·
+          <kbd>Esc</kbd> 隐藏
+        </div>
+      </section>
+
+      <dialog id="image-dlg" class="image-dlg">
+        <div class="json-head">
+          <h2 id="image-title">图片预览</h2>
+          <button class="icon-mini" id="image-close" title="关闭">✕</button>
+        </div>
+        <div class="image-wrap"><img id="image-preview" alt="预览" /></div>
+        <div class="json-actions">
+          <button class="btn-mini" id="image-copy">复制 / 保存图片</button>
+          <span class="spacer"></span>
+          <span id="image-meta" class="json-status"></span>
+        </div>
+      </dialog>
+
+      <dialog id="json-dlg" class="json-dlg">
+        <div class="json-head">
+          <h2>JSON 工具</h2>
+          <button class="icon-mini" id="json-close" title="关闭">✕</button>
+        </div>
+        <div class="json-actions">
+          <button class="btn-mini" id="json-format">格式化</button>
+          <button class="btn-mini" id="json-escape">转义</button>
+          <button class="btn-mini" id="json-unescape">去转义</button>
+          <button class="btn-mini" id="json-minify">压缩</button>
+          <span class="spacer"></span>
+          <button class="btn-mini" id="json-copy">复制</button>
+        </div>
+        <textarea id="json-text" spellcheck="false"></textarea>
+        <div id="json-status" class="json-status"></div>
+      </dialog>
+
+      <div id="toast"></div>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

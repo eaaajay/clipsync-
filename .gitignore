@@ -1,0 +1,42 @@
+# 依赖
+node_modules/
+
+# 前端产物
+dist/
+
+# Rust 构建产物
+src-tauri/target/
+
+# Tauri 生成的 Android 工程会一并提交（方便他人复现），
+# 但必须排除产物与本机相关文件：
+src-tauri/gen/android/app/build/
+src-tauri/gen/android/build/
+src-tauri/gen/android/.gradle/
+src-tauri/gen/android/.kotlin/
+src-tauri/gen/android/.tauri/
+src-tauri/gen/android/local.properties
+# 含本机绝对路径，各机器需自行生成
+src-tauri/gen/android/tauri.settings.gradle
+# 指向 target/ 的绝对路径软链，提交后会失效
+src-tauri/gen/android/app/src/main/jniLibs/
+# 由 tauri 每次构建自动生成的 Kotlin
+src-tauri/gen/android/app/src/main/java/**/generated/
+
+# 本地软链接（指向 node_modules 里的 tauri CLI）
+src-tauri/tauri
+
+# 图标生成源文件（如需修改图标再生成）
+icon-source.png
+icon-preview.png
+
+# 本地配置与日志（可能包含凭据，切勿提交）
+*.local.json
+config.json
+logs/
+*.log
+
+# 编辑器 / 系统
+.DS_Store
+.idea/
+.vscode/
+*.swp

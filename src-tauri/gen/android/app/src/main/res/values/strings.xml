@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">"ClipSync"</string>
+    <string name="main_activity_title">"ClipSync"</string>
+    <string name="accessibility_service_description">用于在 App 退到后台时读取剪贴板，实现跨设备实时同步。仅读取文本内容，不采集任何界面信息。</string>
+</resources>
