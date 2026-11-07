@@ -112,6 +112,13 @@ tauri android build --apk
 # 产物：src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release.apk
 ```
 
+> **构建产物里别带本机路径**：Rust 会把源码绝对路径编进 `panic!` 信息，公开二进制会暴露本机用户名。
+> 本项目用 `scripts/rustc-remap.sh`（`RUSTC_WRAPPER`）在编译时重映射成 `/build`：
+> ```bash
+> export RUSTC_WRAPPER="$PWD/scripts/rustc-remap.sh"
+> ```
+> 注意：**改完这个变量要 `cargo clean` 一次**，否则依赖会用缓存里的旧产物（仍含原路径）。
+
 > 中国大陆网络环境提示：
 > - rustup 组件下载失败时，可临时指定官方源 `RUSTUP_DIST_SERVER=https://static.rust-lang.org`
 > - Gradle 拉取 `dl.google.com` / `repo.maven.apache.org` 出现 TLS 握手失败时，在 `src-tauri/gen/android/build.gradle.kts` 与 `buildSrc/build.gradle.kts` 的 `repositories` 中优先加入阿里云镜像：

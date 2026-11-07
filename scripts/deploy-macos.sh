@@ -9,6 +9,9 @@ IDENTITY="${CLIPSYNC_SIGN_IDENTITY:-ClipSync Dev}"
 # 专用钥匙串（密码公开，仅为避免每次签名弹授权框）
 KEYCHAIN="${CLIPSYNC_KEYCHAIN:-$HOME/Library/Keychains/clipsync-sign.keychain-db}"
 
+# 重映射源码绝对路径，避免把本机用户名写进二进制
+export RUSTC_WRAPPER="$PWD/scripts/rustc-remap.sh"
+
 echo "==> 构建 macOS 应用"
 npx tauri build
 
