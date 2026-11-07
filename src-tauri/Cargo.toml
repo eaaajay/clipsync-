@@ -22,6 +22,10 @@ image = { version = "0.25", default-features = false, features = ["png", "jpeg"]
 
 [profile.release]
 strip = true
+lto = true
+codegen-units = 1
+opt-level = "s"
+panic = "abort"
 
 # 全局快捷键仅桌面端可用
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]

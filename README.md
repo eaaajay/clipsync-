@@ -125,6 +125,26 @@ tauri android build --apk
 >   `https://maven.aliyun.com/repository/public`、`/google`、`/gradle-plugin`
 > - 只打 arm64 可在 `src-tauri/gen/android/gradle.properties` 加 `abiList=arm64-v8a`、`archList=arm64`、`targetList=aarch64`
 
+## 安装
+
+### Android
+从 [Releases](https://github.com/eaaajay/clipsync-/releases) 下载 `ClipSync.apk`（arm64，约 9MB），
+允许「安装未知应用」后安装。
+
+### macOS
+下载 Release 里的 `ClipSync.dmg`，拖到「应用程序」。
+
+App 使用自签名证书（非 Apple 公证），首次打开会被 Gatekeeper 拦截，用以下任一方式放行：
+
+```bash
+# 方式一：终端去掉隔离属性
+xattr -dr com.apple.quarantine /Applications/ClipSync.app
+
+# 方式二：右键 App → 打开 → 仍要打开
+```
+
+首次使用「Enter 直接粘贴」需到 **系统设置 → 隐私与安全性 → 辅助功能** 勾选 ClipSync。
+
 ## 使用
 
 1. 两端分别打开应用，点右上角齿轮填写 WebDAV 地址、用户名、密码 → 保存
