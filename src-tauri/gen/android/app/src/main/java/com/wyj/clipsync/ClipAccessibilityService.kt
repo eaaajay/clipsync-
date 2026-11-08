@@ -5,6 +5,7 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.os.Handler
 import android.os.Looper
+import android.util.Log
 import android.view.accessibility.AccessibilityEvent
 
 /**
@@ -62,6 +63,7 @@ class ClipAccessibilityService : AccessibilityService() {
     override fun onServiceConnected() {
         super.onServiceConnected()
         BackgroundClipboard.serviceEnabled = true
+        Log.i(TAG, "后台剪贴板服务已连接")
         handler.removeCallbacks(poller)
         handler.post(poller)
     }
@@ -76,11 +78,13 @@ class ClipAccessibilityService : AccessibilityService() {
 
     override fun onDestroy() {
         BackgroundClipboard.serviceEnabled = false
+        Log.w(TAG, "后台剪贴板服务已断开")
         handler.removeCallbacks(poller)
         super.onDestroy()
     }
 
     companion object {
+        private const val TAG = "ClipSync"
         private const val POLL_MS = 1200L
     }
 }

@@ -2,4 +2,5 @@
     <string name="app_name">"ClipSync"</string>
     <string name="main_activity_title">"ClipSync"</string>
     <string name="accessibility_service_description">用于在 App 退到后台时读取剪贴板，实现跨设备实时同步。仅读取文本内容，不采集任何界面信息。</string>
+    <string name="notification_service_description">可选功能：仅提取通知中包含验证码关键词的 4–8 位数字并同步，不读取短信列表，不保存通知全文。</string>
 </resources>

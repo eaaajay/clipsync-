@@ -23,7 +23,8 @@ abstract class BuildTask : DefaultTask() {
 
     @TaskAction
     fun assemble() {
-        val executable = """node""";
+        // 通过 npx 从项目 node_modules 解析 Tauri CLI；node tauri 会把 tauri 当成本地 JS 文件。
+        val executable = """npx""";
         try {
             runTauriCli(executable)
         } catch (e: Exception) {

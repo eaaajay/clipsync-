@@ -219,6 +219,11 @@ struct SyncState {
     /// 待发送队列（断网时保留，恢复后补传）
     outbox: Arc<Mutex<Vec<OutboxItem>>>,
     seq: Arc<std::sync::atomic::AtomicU64>,
+    /// Android Activity 存活标记；退后台不删除，只有 onDestroy 才删除。
+    #[cfg(target_os = "android")]
+    activity_marker: Arc<Mutex<Option<std::path::PathBuf>>>,
+    #[cfg(target_os = "android")]
+    native_status_cache: Arc<Mutex<Option<String>>>,
 }
 
 impl SyncState {
@@ -491,6 +496,67 @@ fn take_background_clipboard(app: &AppHandle) -> Option<String> {
 
 #[cfg(not(target_os = "android"))]
 fn take_background_clipboard(_app: &AppHandle) -> Option<String> {
+    None
+}
+
+/// 非阻塞读取通知验证码。插件异常或回调丢失时只暂停 OTP，不拖住文字/收藏同步线程。
+#[cfg(target_os = "android")]
+fn take_notification_otp(app: &AppHandle) -> Option<String> {
+    static RESULTS: std::sync::OnceLock<Mutex<std::collections::VecDeque<String>>> =
+        std::sync::OnceLock::new();
+    static CALL_ACTIVE: AtomicBool = AtomicBool::new(false);
+
+    #[derive(serde::Serialize)]
+    struct Empty {}
+    #[derive(serde::Deserialize)]
+    struct Res {
+        #[serde(default)]
+        empty: bool,
+        #[serde(default)]
+        text: Option<String>,
+    }
+
+    let results = RESULTS.get_or_init(|| Mutex::new(std::collections::VecDeque::new()));
+    if let Some(code) = results.lock().unwrap().pop_front() {
+        return Some(code);
+    }
+    if CALL_ACTIVE.swap(true, Ordering::SeqCst) {
+        return None;
+    }
+    let Some(st) = app.try_state::<AndroidGallery<tauri::Wry>>() else {
+        CALL_ACTIVE.store(false, Ordering::SeqCst);
+        return None;
+    };
+    let plugin = st.0.clone();
+    tauri::async_runtime::spawn(async move {
+        struct CallGuard(&'static AtomicBool);
+        impl Drop for CallGuard {
+            fn drop(&mut self) {
+                self.0.store(false, Ordering::SeqCst);
+            }
+        }
+        // 无论超时、回调丢失还是生命周期 panic 展开，都允许下一轮重试。
+        let _guard = CallGuard(&CALL_ACTIVE);
+        if let Ok(Ok(res)) = tokio::time::timeout(
+            Duration::from_secs(2),
+            plugin.run_mobile_plugin_async::<Res>("takeOtp", Empty {}),
+        )
+        .await
+        {
+            if !res.empty {
+                if let Some(code) = res.text {
+                    if let Some(queue) = RESULTS.get() {
+                        queue.lock().unwrap().push_back(code);
+                    }
+                }
+            }
+        }
+    });
+    None
+}
+
+#[cfg(not(target_os = "android"))]
+fn take_notification_otp(_app: &AppHandle) -> Option<String> {
     None
 }
 
@@ -1425,8 +1491,10 @@ fn flush_outbox(app: &AppHandle, state: &SyncState, cfg: &Config) -> Result<(), 
                     drop(q);
                     save_outbox(app, &snapshot);
                 }
-                if item.kind != "image" {
+                if item.kind == "text" {
                     *state.last_local_sent.lock().unwrap() = Some(item.content.clone());
+                }
+                if item.kind != "image" {
                     state.push_history(app, "up", &item.content);
                 }
                 *state.last_sync_at.lock().unwrap() = Some(now_ms());
@@ -1462,6 +1530,45 @@ fn status_snapshot(state: &SyncState) -> SyncStatus {
         last_error: state.last_error.lock().unwrap().clone(),
         last_sync_at: *state.last_sync_at.lock().unwrap(),
         pending: state.outbox.lock().unwrap().len(),
+    }
+}
+
+/// 用原子文件替换驱动 Android 状态通知；相同状态不写盘，避免额外耗电。
+#[cfg(target_os = "android")]
+fn publish_android_status(state: &SyncState) {
+    let marker = state.activity_marker.lock().unwrap().clone();
+    let Some(marker) = marker else { return };
+    let status = status_snapshot(state);
+    let body = serde_json::json!({
+        "running": status.running,
+        "error": status.last_error.unwrap_or_default(),
+        "pending": status.pending,
+        "activityAlive": marker.exists(),
+    })
+    .to_string();
+    {
+        let mut cache = state.native_status_cache.lock().unwrap();
+        if cache.as_deref() == Some(body.as_str()) {
+            return;
+        }
+        let path = marker.with_file_name(".sync_status.json");
+        let temp = marker.with_file_name(".sync_status.json.tmp");
+        if std::fs::write(&temp, &body).is_err() || std::fs::rename(&temp, &path).is_err() {
+            return;
+        }
+        *cache = Some(body);
+    }
+}
+
+/// 仅由界面命令调用；后台线程不能进入 mobile plugin dispatch。
+#[cfg(target_os = "android")]
+fn refresh_android_status_service(app: &AppHandle, state: &SyncState) {
+    publish_android_status(state);
+    if let Some(plugin) = app.try_state::<AndroidGallery<tauri::Wry>>() {
+        let _ = plugin.0.run_mobile_plugin::<serde_json::Value>(
+            "refreshStatusService",
+            serde_json::json!({}),
+        );
     }
 }
 
@@ -1564,6 +1671,23 @@ fn sync_once(app: &AppHandle, state: &SyncState) -> Result<(), String> {
         }
     }
 
+    // 验证码在本轮最后入队，确保任何待发送/新剪贴板文本都先上传，OTP 保持为最终远端内容
+    while let Some(code) = take_notification_otp(app) {
+        enqueue(
+            app,
+            state,
+            OutboxItem {
+                kind: "otp".to_string(),
+                content: code,
+                ext: String::new(),
+                created: now_ms(),
+                attempts: 0,
+                next_try: 0,
+            },
+        );
+    }
+    let _ = app.emit("sync-status", status_snapshot(state));
+
     // 3) 收藏同步（独立节流，失败不影响剪贴板同步）
     let due = {
         let mut last = state.last_fav_sync.lock().unwrap();
@@ -1596,7 +1720,29 @@ fn spawn_sync_loop(app: AppHandle, state: SyncState) {
             thread::sleep(Duration::from_millis(300));
             continue;
         }
-        match sync_once(&app, &state) {
+        #[cfg(target_os = "android")]
+        {
+            let activity_alive = state
+                .activity_marker
+                .lock()
+                .unwrap()
+                .as_ref()
+                .map(|path| path.exists())
+                .unwrap_or(false);
+            if !activity_alive {
+                publish_android_status(&state);
+                thread::sleep(Duration::from_millis(300));
+                continue;
+            }
+        }
+        // 防御 Activity 检查与插件派发之间的生命周期竞态，单次异常不能杀死同步线程。
+        let outcome = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            sync_once(&app, &state)
+        })) {
+            Ok(result) => result,
+            Err(_) => Err("系统界面已重建，同步将在下一轮自动恢复".to_string()),
+        };
+        match outcome {
             Ok(()) => {
                 let had_error = {
                     let mut err = state.last_error.lock().unwrap();
@@ -1615,6 +1761,8 @@ fn spawn_sync_loop(app: AppHandle, state: SyncState) {
                 let _ = app.emit("sync-status", status_snapshot(&state));
             }
         }
+        #[cfg(target_os = "android")]
+        publish_android_status(&state);
         // 自适应间隔：最近有同步就快一点，长时间空闲则放慢，减少对 NAS 的请求
         let idle_ms = {
             let last = *state.last_sync_at.lock().unwrap();
@@ -1674,12 +1822,16 @@ fn start_sync(app: AppHandle, state: State<'_, SyncState>) -> Result<(), String>
         return Err("请先填写 WebDAV 地址并保存".into());
     }
     state.running.store(true, Ordering::SeqCst);
+    #[cfg(target_os = "android")]
+    refresh_android_status_service(&app, &state);
     Ok(())
 }
 
 #[tauri::command]
-fn stop_sync(state: State<'_, SyncState>) -> Result<(), String> {
+fn stop_sync(_app: AppHandle, state: State<'_, SyncState>) -> Result<(), String> {
     state.running.store(false, Ordering::SeqCst);
+    #[cfg(target_os = "android")]
+    refresh_android_status_service(&_app, &state);
     Ok(())
 }
 
@@ -2117,6 +2269,95 @@ fn accessibility_enabled(app: AppHandle) -> bool {
     }
 }
 
+#[derive(Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct OtpStatus {
+    enabled: bool,
+    permission_granted: bool,
+    connected: bool,
+}
+
+/// 开关短信验证码同步；默认关闭，设置仅保存在本机
+#[tauri::command]
+fn set_otp_enabled(
+    app: AppHandle,
+    state: State<'_, SyncState>,
+    enabled: bool,
+) -> Result<(), String> {
+    #[cfg(target_os = "android")]
+    {
+        #[derive(serde::Serialize)]
+        struct Args {
+            enabled: bool,
+        }
+        let st = app
+            .try_state::<AndroidGallery<tauri::Wry>>()
+            .ok_or("插件未初始化")?;
+        let result = st
+            .0
+            .run_mobile_plugin::<serde_json::Value>("setOtpEnabled", Args { enabled })
+            .map(|_| ())
+            .map_err(|e| e.to_string());
+        if !enabled && result.is_ok() {
+            // 已离线入队的验证码也一并撤销，避免关闭后恢复网络又上传。
+            let mut q = state.outbox.lock().unwrap();
+            q.retain(|item| item.kind != "otp");
+            let snapshot = q.clone();
+            drop(q);
+            save_outbox(&app, &snapshot);
+            let _ = app.emit("sync-status", status_snapshot(&state));
+        }
+        result
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = (app, state, enabled);
+        Err("仅 Android 支持短信验证码同步".into())
+    }
+}
+
+#[tauri::command]
+fn otp_status(app: AppHandle) -> OtpStatus {
+    #[cfg(target_os = "android")]
+    {
+        #[derive(serde::Serialize)]
+        struct Empty {}
+        if let Some(st) = app.try_state::<AndroidGallery<tauri::Wry>>() {
+            if let Ok(status) = st
+                .0
+                .run_mobile_plugin::<OtpStatus>("getOtpStatus", Empty {})
+            {
+                return status;
+            }
+        }
+        OtpStatus::default()
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = app;
+        OtpStatus::default()
+    }
+}
+
+/// 打开系统通知使用权设置（Android）
+#[tauri::command]
+fn open_notification_settings(app: AppHandle) {
+    #[cfg(target_os = "android")]
+    {
+        #[derive(serde::Serialize)]
+        struct Empty {}
+        if let Some(st) = app.try_state::<AndroidGallery<tauri::Wry>>() {
+            let _ = st
+                .0
+                .run_mobile_plugin::<serde_json::Value>("openNotificationSettings", Empty {});
+        }
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = app;
+    }
+}
+
 /// 打开系统无障碍设置页（Android）
 #[tauri::command]
 fn open_accessibility_settings(app: AppHandle) {
@@ -2548,6 +2789,10 @@ pub fn run() {
         last_clip_count: Arc::new(Mutex::new(0)),
         outbox: Arc::new(Mutex::new(Vec::new())),
         seq: Arc::new(std::sync::atomic::AtomicU64::new(1)),
+        #[cfg(target_os = "android")]
+        activity_marker: Arc::new(Mutex::new(None)),
+        #[cfg(target_os = "android")]
+        native_status_cache: Arc::new(Mutex::new(None)),
     };
 
     tauri::Builder::default()
@@ -2566,6 +2811,17 @@ pub fn run() {
             }
         })
         .setup(move |app| {
+            // 在 Activity 可用时缓存纯文件路径；之后不能在无 Activity 时调用 Tauri path 插件。
+            #[cfg(target_os = "android")]
+            {
+                let marker = app
+                    .path()
+                    .app_data_dir()
+                    .ok()
+                    .map(|dir| dir.join(".main_activity_alive"));
+                *app.state::<SyncState>().activity_marker.lock().unwrap() = marker;
+            }
+
             // 载入本地数据：收藏（永久）与最近记录（7 天）
             {
                 let st = app.state::<SyncState>();
@@ -2596,6 +2852,9 @@ pub fn run() {
                     }
                 }
             }
+
+            #[cfg(target_os = "android")]
+            publish_android_status(&sync_state);
 
             #[cfg(target_os = "macos")]
             {
@@ -2644,6 +2903,9 @@ pub fn run() {
             image_data_url,
             accessibility_enabled,
             open_accessibility_settings,
+            set_otp_enabled,
+            otp_status,
+            open_notification_settings,
             clear_history
         ])
         .run(tauri::generate_context!())

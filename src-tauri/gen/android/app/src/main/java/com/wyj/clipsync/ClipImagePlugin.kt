@@ -46,6 +46,11 @@ class SaveImageArgs {
     var name: String? = null
 }
 
+@InvokeArg
+class OtpEnabledArgs {
+    var enabled: Boolean = false
+}
+
 /**
  * 把 PNG 保存到系统相册（Pictures/ClipSync），供 Android 端使用。
  * Android 剪贴板对图片的支持极差（输入法、IM 基本都不支持粘贴图片），
@@ -53,6 +58,10 @@ class SaveImageArgs {
  */
 @TauriPlugin
 class ClipImagePlugin(private val activity: Activity) : Plugin(activity) {
+    companion object {
+        const val SETTINGS_PREFS = "clipsync_settings"
+        const val OTP_ENABLED = "otp_enabled"
+    }
 
     /** 用 Android Keystore 派生的密钥加密存敏感信息（如 WebDAV 密码） */
     private fun secretPrefs(): SharedPreferences {
@@ -81,6 +90,12 @@ class ClipImagePlugin(private val activity: Activity) : Plugin(activity) {
         }
     }
 
+    @Command
+    fun refreshStatusService(invoke: Invoke) {
+        SyncStatusService.start(activity)
+        invoke.resolve()
+    }
+
     /** 取走无障碍服务捕获的后台剪贴板文本 */
     @Command
     fun takeBackgroundClipboard(invoke: Invoke) {
@@ -95,10 +110,10 @@ class ClipImagePlugin(private val activity: Activity) : Plugin(activity) {
         invoke.resolve(res)
     }
 
-    /** 无障碍服务是否已开启 */
+    /** 无障碍服务是否已开启且真正连接（系统设置开启但服务崩溃时不能误报） */
     @Command
     fun isAccessibilityEnabled(invoke: Invoke) {
-        val enabled = try {
+        val configured = try {
             val am = activity.getSystemService(Context.ACCESSIBILITY_SERVICE)
                 as android.view.accessibility.AccessibilityManager
             am.getEnabledAccessibilityServiceList(android.accessibilityservice.AccessibilityServiceInfo.FEEDBACK_ALL_MASK)
@@ -107,7 +122,7 @@ class ClipImagePlugin(private val activity: Activity) : Plugin(activity) {
             false
         }
         val res = JSObject()
-        res.put("enabled", enabled)
+        res.put("enabled", configured && BackgroundClipboard.serviceEnabled)
         invoke.resolve(res)
     }
 
@@ -121,6 +136,57 @@ class ClipImagePlugin(private val activity: Activity) : Plugin(activity) {
             invoke.resolve()
         } catch (e: Exception) {
             invoke.reject(e.message ?: "无法打开设置")
+        }
+    }
+
+    /** 取走通知服务捕获的验证码，仅保留在内存中直到同步线程取走 */
+    @Command
+    fun takeOtp(invoke: Invoke) {
+        val code = OtpInbox.consume()
+        val res = JSObject()
+        res.put("empty", code == null)
+        if (code != null) res.put("text", code)
+        invoke.resolve(res)
+    }
+
+    @Command
+    fun setOtpEnabled(invoke: Invoke) {
+        try {
+            val args = invoke.parseArgs(OtpEnabledArgs::class.java)
+            activity.getSharedPreferences(SETTINGS_PREFS, Context.MODE_PRIVATE)
+                .edit()
+                .putBoolean(OTP_ENABLED, args.enabled)
+                .apply()
+            if (!args.enabled) OtpInbox.reset()
+            invoke.resolve()
+        } catch (e: Exception) {
+            invoke.reject(e.message ?: "保存验证码同步设置失败")
+        }
+    }
+
+    @Command
+    fun getOtpStatus(invoke: Invoke) {
+        val enabled = activity.getSharedPreferences(SETTINGS_PREFS, Context.MODE_PRIVATE)
+            .getBoolean(OTP_ENABLED, false)
+        val permissionGranted = androidx.core.app.NotificationManagerCompat
+            .getEnabledListenerPackages(activity)
+            .contains(activity.packageName)
+        val res = JSObject()
+        res.put("enabled", enabled)
+        res.put("permissionGranted", permissionGranted)
+        res.put("connected", OtpInbox.serviceEnabled)
+        invoke.resolve(res)
+    }
+
+    @Command
+    fun openNotificationSettings(invoke: Invoke) {
+        try {
+            val intent = Intent(android.provider.Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            activity.startActivity(intent)
+            invoke.resolve()
+        } catch (e: Exception) {
+            invoke.reject(e.message ?: "无法打开通知使用权设置")
         }
     }
 

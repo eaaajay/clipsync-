@@ -144,6 +144,7 @@ header h1 { font-size: 19px; margin: 0; }
 .a11y-title { font-size: 13px; font-weight: 600; }
 .a11y-desc { font-size: 11px; color: var(--muted); margin-top: 2px; }
 .a11y-desc.ok { color: var(--ok); }
+.row-button-group { display: flex; gap: 6px; flex-shrink: 0; }
 .hidden { display: none !important; }
 
 /* ---------- 同步记录 ---------- */

@@ -82,14 +82,47 @@ async function refreshA11y() {
     const btn = document.getElementById("a11y-btn") as HTMLButtonElement;
     if (desc) {
       desc.textContent = enabled
-        ? "已开启，App 在后台也能同步"
-        : "未开启，App 退到后台将无法同步";
+        ? "已连接，App 在后台也能同步"
+        : "服务未连接，请在系统设置中关闭后重新开启";
       desc.className = "a11y-desc" + (enabled ? " ok" : "");
     }
     btn.textContent = enabled ? "已开启" : "去开启";
     btn.disabled = enabled;
   } catch {
     /* 忽略 */
+  }
+}
+
+interface OtpStatus {
+  enabled: boolean;
+  permissionGranted: boolean;
+  connected: boolean;
+}
+
+async function refreshOtpStatus() {
+  if (!IS_ANDROID) return;
+  const row = document.getElementById("otp-row");
+  if (!row) return;
+  row.style.display = "flex";
+  try {
+    const status = await invoke<OtpStatus>("otp_status");
+    const desc = $<HTMLDivElement>("#otp-desc");
+    const permissionBtn = $<HTMLButtonElement>("#otp-permission");
+    const ready = status.enabled && status.permissionGranted && status.connected;
+    desc.textContent = !status.enabled
+      ? "已关闭 · 仅提取通知中的 4–8 位验证码"
+      : !status.permissionGranted
+      ? "需要通知使用权；不会读取短信列表"
+      : !status.connected
+      ? "通知服务未连接，请重新开关通知使用权"
+      : "已开启 · 自动同步新收到的验证码";
+    desc.className = "a11y-desc" + (ready ? " ok" : "");
+    $<HTMLButtonElement>("#otp-toggle").textContent = status.enabled ? "关闭" : "开启";
+    permissionBtn.style.display =
+      status.enabled && (!status.permissionGranted || !status.connected) ? "" : "none";
+    permissionBtn.textContent = status.permissionGranted ? "去连接" : "去授权";
+  } catch (e) {
+    console.error(e);
   }
 }
 
@@ -840,11 +873,32 @@ async function init() {
   initKeyboard();
   initJsonTools();
   void refreshA11y();
+  void refreshOtpStatus();
 
   document.getElementById("a11y-btn")?.addEventListener("click", async () => {
     await invoke("open_accessibility_settings");
     toast("请在弹出的设置里找到 ClipSync 并开启");
     setTimeout(() => void refreshA11y(), 2500);
+  });
+  $<HTMLButtonElement>("#otp-toggle").addEventListener("click", async () => {
+    try {
+      const current = await invoke<OtpStatus>("otp_status");
+      const enabled = !current.enabled;
+      await invoke("set_otp_enabled", { enabled });
+      if (enabled && !current.permissionGranted) {
+        await invoke("open_notification_settings");
+        toast("请允许 ClipSync 读取通知，用于提取验证码");
+      } else {
+        toast(enabled ? "验证码同步已开启" : "验证码同步已关闭");
+      }
+      await refreshOtpStatus();
+    } catch (e) {
+      toast(String(e));
+    }
+  });
+  $<HTMLButtonElement>("#otp-permission").addEventListener("click", async () => {
+    await invoke("open_notification_settings");
+    toast("请重新开关 ClipSync 的通知使用权");
   });
   await loadConfig();
   try {
@@ -866,6 +920,7 @@ async function init() {
       if (payload) {
         void importSharedImage();
         void refreshA11y();
+        void refreshOtpStatus();
       }
     });
   } catch {

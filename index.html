@@ -41,6 +41,17 @@
           <button class="btn-mini" id="a11y-btn">去开启</button>
         </div>
 
+        <div id="otp-row" class="a11y-row" style="display:none">
+          <div>
+            <div class="a11y-title">自动同步短信验证码</div>
+            <div class="a11y-desc" id="otp-desc">默认关闭；仅提取通知中的 4–8 位验证码</div>
+          </div>
+          <div class="row-button-group">
+            <button class="btn-mini" id="otp-permission" style="display:none">去授权</button>
+            <button class="btn-mini" id="otp-toggle">开启</button>
+          </div>
+        </div>
+
         <label>呼出快捷键</label>
         <input id="hotkey" type="text" readonly placeholder="点这里后按下组合键，如 ⌘⇧V" />
         <div class="hint">点进输入框后直接按组合键即可；按 Backspace 清除（关闭快捷键）</div>
